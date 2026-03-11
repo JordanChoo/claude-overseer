@@ -1,2 +1,4 @@
 loop-notes/
 .claude/settings.local.json
+.claude/todos/
+.DS_Store
