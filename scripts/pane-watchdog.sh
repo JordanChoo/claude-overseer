@@ -15,7 +15,7 @@ SESSION=""
 FROZEN_THRESHOLD=120  # seconds of no output change before considered frozen
 SNAPSHOT_INTERVAL=10  # seconds between snapshots
 SNAPSHOT_CHECKS=3     # number of snapshots to take
-SKIP_PANE=0           # pane index 0 is the NTM user pane
+SKIP_PANES="0"        # comma-separated pane indices to skip (default: 0 = NTM user pane)
 LOG_DIR="$HOME/.ntm/logs"
 NOTES_DIR=""
 
@@ -38,12 +38,14 @@ Options:
   --frozen-threshold SEC   Seconds of inactivity before frozen (default: 120)
   --snapshot-interval SEC  Seconds between content snapshots (default: 10)
   --snapshot-checks N      Number of snapshots to compare (default: 3)
+  --skip-panes LIST        Comma-separated pane indices to skip (default: 0)
   --notes-dir DIR          Directory to write findings (default: none)
   -h, --help               Show this help
 
 Examples:
   $(basename "$0") --session myproject
   $(basename "$0") --session myproject --frozen-threshold 180 --notes-dir ./loop-notes
+  $(basename "$0") --session myproject --skip-panes "0,2"
 EOF
   exit 0
 }
@@ -56,6 +58,7 @@ while [[ $# -gt 0 ]]; do
     --frozen-threshold)   FROZEN_THRESHOLD="$2"; shift 2 ;;
     --snapshot-interval)  SNAPSHOT_INTERVAL="$2"; shift 2 ;;
     --snapshot-checks)    SNAPSHOT_CHECKS="$2"; shift 2 ;;
+    --skip-panes)         SKIP_PANES="$2"; shift 2 ;;
     --notes-dir)          NOTES_DIR="$2"; shift 2 ;;
     -h|--help)            usage ;;
     *)                    echo "Unknown option: $1" >&2; usage ;;
@@ -66,6 +69,18 @@ if [[ -z "$SESSION" ]]; then
   echo "Error: --session is required" >&2
   exit 2
 fi
+
+# --- Parse skip panes into array ---
+
+IFS=',' read -ra SKIP_PANES_ARR <<< "$SKIP_PANES"
+
+should_skip_pane() {
+  local pane="$1"
+  for skip in "${SKIP_PANES_ARR[@]}"; do
+    [[ "$pane" -eq "$skip" ]] && return 0
+  done
+  return 1
+}
 
 # --- Verify dependencies ---
 
@@ -116,7 +131,7 @@ fi
 
 log "=== Pane Watchdog ==="
 log "Session: $SESSION"
-log "Panes: ${#PANE_INDICES[@]} total (skipping pane $SKIP_PANE)"
+log "Panes: ${#PANE_INDICES[@]} total (skipping panes: $SKIP_PANES)"
 log "Frozen threshold: ${FROZEN_THRESHOLD}s"
 log "Snapshots: ${SNAPSHOT_CHECKS} checks, ${SNAPSHOT_INTERVAL}s apart"
 log ""
@@ -135,7 +150,7 @@ for (( c = 0; c < SNAPSHOT_CHECKS; c++ )); do
   [[ $c -gt 0 ]] && sleep "$SNAPSHOT_INTERVAL"
 
   for pane_idx in "${PANE_INDICES[@]}"; do
-    [[ "$pane_idx" -eq "$SKIP_PANE" ]] && continue
+    should_skip_pane "$pane_idx" && continue
 
     hash=$("$TMUX_BIN" capture-pane -t "$SESSION:0.$pane_idx" -p 2>/dev/null | md5 -q 2>/dev/null || \
            "$TMUX_BIN" capture-pane -t "$SESSION:0.$pane_idx" -p 2>/dev/null | md5sum 2>/dev/null | awk '{print $1}')
@@ -163,7 +178,7 @@ RESTARTS=0
 FINDINGS=""
 
 for pane_idx in "${PANE_INDICES[@]}"; do
-  [[ "$pane_idx" -eq "$SKIP_PANE" ]] && continue
+  should_skip_pane "$pane_idx" && continue
 
   pane_target="$SESSION:0.$pane_idx"
   pane_label="pane-$pane_idx"

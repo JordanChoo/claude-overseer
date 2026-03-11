@@ -24,7 +24,7 @@ SNAPSHOT_INTERVAL=10
 SNAPSHOT_CHECKS=3
 SEND_DELAY_MIN=2
 SEND_DELAY_MAX=5
-SKIP_PANE=0
+SKIP_PANES="0"        # comma-separated pane indices to skip (default: 0 = NTM user pane)
 AGENT_TYPE_FILTER=""  # empty = all types
 
 # --- Helpers ---
@@ -48,6 +48,7 @@ Options:
   --custom-prompts FILE    Custom prompts markdown file (default: <repo>/custom-prompts.md)
   --snapshot-interval SEC  Seconds between content snapshots (default: 10)
   --snapshot-checks N      Number of snapshots to compare (default: 3)
+  --skip-panes LIST        Comma-separated pane indices to skip (default: 0)
   --send-delay MIN,MAX     Random delay range between sends (default: 2,5)
   --agent-type TYPE        Only prompt agents of this type: cc, cod (default: all)
   --notes-dir DIR          Directory to write findings (default: none)
@@ -57,6 +58,7 @@ Examples:
   $(basename "$0") --session myproject
   $(basename "$0") --session myproject --agent-type cc
   $(basename "$0") --session myproject --send-delay 3,8
+  $(basename "$0") --session myproject --skip-panes "0,2"
 EOF
   exit 0
 }
@@ -77,6 +79,7 @@ while [[ $# -gt 0 ]]; do
       IFS=',' read -r SEND_DELAY_MIN SEND_DELAY_MAX <<< "$2"
       shift 2
       ;;
+    --skip-panes)         SKIP_PANES="$2"; shift 2 ;;
     --agent-type)         AGENT_TYPE_FILTER="$2"; shift 2 ;;
     --notes-dir)          NOTES_DIR="$2"; shift 2 ;;
     -h|--help)            usage ;;
@@ -88,6 +91,18 @@ if [[ -z "$SESSION" ]]; then
   echo "Error: --session is required" >&2
   exit 2
 fi
+
+# --- Parse skip panes into array ---
+
+IFS=',' read -ra SKIP_PANES_ARR <<< "$SKIP_PANES"
+
+should_skip_pane() {
+  local pane="$1"
+  for skip in "${SKIP_PANES_ARR[@]}"; do
+    [[ "$pane" -eq "$skip" ]] && return 0
+  done
+  return 1
+}
 
 # --- Verify dependencies ---
 
@@ -229,7 +244,7 @@ for (( c = 0; c < SNAPSHOT_CHECKS; c++ )); do
   [[ $c -gt 0 ]] && sleep "$SNAPSHOT_INTERVAL"
 
   for pane_idx in "${PANE_INDICES[@]}"; do
-    [[ "$pane_idx" -eq "$SKIP_PANE" ]] && continue
+    should_skip_pane "$pane_idx" && continue
 
     hash=$("$TMUX_BIN" capture-pane -t "$SESSION:0.$pane_idx" -p 2>/dev/null | md5 -q 2>/dev/null || \
            "$TMUX_BIN" capture-pane -t "$SESSION:0.$pane_idx" -p 2>/dev/null | md5sum 2>/dev/null | awk '{print $1}')
@@ -269,7 +284,7 @@ SENDS=0
 FINDINGS=""
 
 for pane_idx in "${PANE_INDICES[@]}"; do
-  [[ "$pane_idx" -eq "$SKIP_PANE" ]] && continue
+  should_skip_pane "$pane_idx" && continue
 
   pane_target="$SESSION:0.$pane_idx"
   pane_label="pane-$pane_idx"
